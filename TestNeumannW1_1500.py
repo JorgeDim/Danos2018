@@ -25,6 +25,7 @@ nu = 0.3
 rho    = 2.7e3
 g    = 9.8
 gravity = rho*g
+rhoG=rho*g
 
 ell  = 0.1 * Scale;
 
@@ -57,8 +58,8 @@ modelname = "Cavity_w1-1500_P1_kw-25e3"
 regenerate_mesh = True
 
 savedir = "results/%s"%(modelname)
-if os.path.isdir(savedir):
-    shutil.rmtree(savedir)
+#if os.path.isdir(savedir):
+#    shutil.rmtree(savedir)
     
 #----------------------------------------------------------------
 # Parameters to define the geometry if apply are defined here.

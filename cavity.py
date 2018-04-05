@@ -44,7 +44,12 @@
 #-----------------------------------------------
 #from TestNeumannW1_900 import *
 #from TestNeumannW1_1100 import *
+
 from TestNeumannW1_1500 import *
+
+tic0=time() 
+set_log_level(ERROR) # log level
+set_log_level(PROGRESS)
 #-----------------------------------------------
 
 print ("-----------------------------------------")
@@ -55,8 +60,7 @@ print ("-----------------------------------------")
 # ------------------------------------------------------
 # Parameters for an optimal compilation.
 # ------------------------------------------------------
-set_log_level(ERROR) # log level
-parameters.parse()   # read paramaters from command line
+#parameters.parse()   # read paramaters from command line  #JSM
 # set some dolfin specific parameters
 parameters["form_compiler"]["optimize"]     = True
 parameters["form_compiler"]["cpp_optimize"] = True
@@ -82,7 +86,7 @@ solver_minimization_parameters =  {"method" : "gpcg",
                             # These are parameters for linear solver
                             #--------------------------------
                             "krylov_solver" : {
-                                "maximum_iterations" : 200,
+                                "maximum_iterations" : 200, 
                                 "report" : True,
                                 "monitor_convergence" : False,
                                 "relative_tolerance" : 1e-8 
@@ -117,7 +121,19 @@ solver_LS_parameters =  {"linear_solver" : "cg",
 # as well as the operator acting on the displacement
 # field, which depends on the damage.
 #------------------------------------------------------
-Kw=Constant(25.e3)
+Kw=Constant(9.e3)
+
+mu    = E / ( 2.0 * ( 1.0 + nu))
+lmbda = E * nu / ( 1.0 - nu**2)
+ffD=lmbda/(lmbda+2*mu)
+
+
+def Desviador(Tensor):
+    return Tensor-Esferico(Tensor)
+def Esferico(Tensor):
+    Tensor2=as_matrix([[ffD,0,0],[0,ffD,0],[0,0,1]])
+#    return (1./3)*tr(Tensor)*Identity(ndim)   
+    return (inner(Tensor,Tensor2)/inner(Tensor2,Tensor2))*Tensor2
 def w(alpha):
     return Kw*(1/(1-alpha)+ln(1-alpha))   #p=1
     #return Kw*(1/(1-alpha)+2*ln(1-alpha)+alpha) #p=2
@@ -139,10 +155,8 @@ def A(alpha):
 #------------------------------------------------------
 def eps ( v):
     return sym ( grad ( v) )
-    
+
 def sigma_0 ( eps):
-    mu    = E / ( 2.0 * ( 1.0 + nu))
-    lmbda = E * nu / ( 1.0 - nu**2)
     return 2.0 * mu * ( eps) + lmbda * tr (eps ) * Identity ( ndim)
 
 #-------------------------------------------------------------------------------
@@ -196,7 +210,10 @@ def energy_div ( u, alpha):
 # constant as zero.
 #------------------------------------------------------------------------------
 #body_force = Constant( (0.0, 0.0, -gravity) )
-body_force = Constant( (0.0, 0.0, 0.0) )
+body_force = Constant( (0.0, 0.0, -rhoG) )
+
+print('[%d/%d] 209: t=%f s'%(mpi_comm_world().rank+1,mpi_comm_world().size,time()-tic0))
+
 
 #------------------------------------------------------------------
 #  Mesh without cavity.
@@ -346,6 +363,10 @@ class DamageProblem ( OptimisationProblem):
 # define the minimization problem using the class.
 problem_alpha = DamageProblem()
   
+
+print('[%d/%d] 361: t=%f s'%(mpi_comm_world().rank+1,mpi_comm_world().size,time()-tic0))
+
+  
 #---------------------------------------------------------------------------- 
 # Set up the solvers. Define the object for solving the displacement
 # problem, "solver_u".
@@ -412,19 +433,32 @@ for bc in bc_alpha :
     bc.apply ( ub.vector ( ) )
 
 # Solve elastic problem un time 0
-solver_u0.solve()
+if False :
+    solver_u0.solve()
+
+print('[%d/%d] 430: t=%f s ..... u0 solved'%(mpi_comm_world().rank+1,mpi_comm_world().size,time()-tic0))
+
 file_u0     << ( u0, 0.0)
 
 # Alternate mininimization
 # Initialization
 iter = 1; err_alpha = 1
 
+
+
+
+print('[%d/%d] 444: t=%f s'%(mpi_comm_world().rank+1,mpi_comm_world().size,time()-tic0))
+
+
+
+
 #-------------------------------------------------------------------    
 # Iterations of the alternate minimization stop if an error limit is
 # reached or a maximim number of iterations have been done.
 #------------------------------------------------------------------- 
-while err_alpha > toll and iter < maxiter :
+while False and err_alpha > toll and iter < maxiter :
     # solve elastic problem
+    print('[%d/%d] 455: t=%f s. solver_u.solve ( )'%(mpi_comm_world().rank+1,mpi_comm_world().size,time()-tic0))
     solver_u.solve ( )
         
     # solve damage problem via a constrained minimization algorithm.
@@ -469,8 +503,8 @@ if mpi_comm_world().rank == 0:
 # Post-processing after having calculated u and alpha
 #---------------------------------------------------------------------------
 # Store u,alpha, sigma and epsilon
-file_alpha     << ( alpha   , 0.)
-file_u         << ( u, 0.)
+#file_alpha     << ( alpha   , 0.)
+#file_u         << ( u, 0.)
 #strain      = eps(u)
 #stress      = project(sigma(strain,alpha),V_tensor)
 #stressG.assign(stress)
@@ -478,27 +512,31 @@ file_u         << ( u, 0.)
 #file_sigma     << ( stressG, 0.)
 #file_epsilon     << ( strainG, 0.)
 
-# Calculate the energies for the geometry without cavities
-elastic_energy_value    = assemble ( elastic_energy1)
-dissipated_energy_value = assemble ( dissipated_energy)
+print('[%d/%d] 507: t=%f s. alpha,u saved...'%(mpi_comm_world().rank+1,mpi_comm_world().size,time()-tic0))
 
-#  Control if alpha is too small
-alpha.vector()[alpha.vector() < 1e-12] = 0.0
-
-# Eval the energy
-W_energy.assign( project ( energy_w ( u, alpha), V_scalar))
-dev_energy.assign( project ( energy_dev ( u, alpha), V_scalar))
-div_energy.assign( project ( energy_div ( u, alpha), V_scalar))
-
-#  Control if energies are too small
-W_energy.vector()[W_energy.vector() < 1e-12] = 0.0
-dev_energy.vector()[dev_energy.vector() < 1e-12 ] = 0.0
-div_energy.vector()[div_energy.vector() < 1e-12 ] = 0.0
-
-# store the energy
-file_energW  << ( W_energy, 0.)
-file_energDev  << ( dev_energy, 0.)
-file_energDiv  << ( div_energy, 0.)
+if False :
+    
+    # Calculate the energies for the geometry without cavities
+    elastic_energy_value    = assemble ( elastic_energy1)
+    dissipated_energy_value = assemble ( dissipated_energy)
+    
+    #  Control if alpha is too small
+    alpha.vector()[alpha.vector() < 1e-12] = 0.0
+    
+    # Eval the energy
+    W_energy.assign( project ( energy_w ( u, alpha), V_scalar))
+    dev_energy.assign( project ( energy_dev ( u, alpha), V_scalar))
+    div_energy.assign( project ( energy_div ( u, alpha), V_scalar))
+    
+    #  Control if energies are too small
+    W_energy.vector()[W_energy.vector() < 1e-12] = 0.0
+    dev_energy.vector()[dev_energy.vector() < 1e-12 ] = 0.0
+    div_energy.vector()[div_energy.vector() < 1e-12 ] = 0.0
+    
+    # store the energy
+    file_energW  << ( W_energy, 0.)
+    file_energDev  << ( dev_energy, 0.)
+    file_energDiv  << ( div_energy, 0.)
 
 # Store the damage for this geometry
 alphaAux.assign ( alpha)
@@ -521,21 +559,40 @@ del ds, dx
 # of geometries which are obtained from an external folder. 
 # The number of external files is "NstepW" and the call is driven
 # by the counter "itmesh".
-itmesh = 1
-NstepW = 40
+itmesh = 30 # JSM
+NstepW = 30
 
 # Before start we store the energy associated to the geometry without cavity.
 energies   		= np.zeros( ( NstepW, 4) )
 
 
+
+print('[%d/%d] 558: t=%f s'%(mpi_comm_world().rank+1,mpi_comm_world().size,time()-tic0))
+
+
+
 #---------------------------------------------------------------------------------------
 #  Starting the loop of the mesh sequence. It is driven by the index "itmesh".
 #---------------------------------------------------------------------------------------
+
+amax=0.0
+a0 = Vector(mpi_comm_self())
+a1 = Vector(mpi_comm_self())
+a2 = Vector(mpi_comm_self())
+
 while itmesh <= NstepW :
     # Read mesh from a sequence of meshes generated externally.
     # These are stored into the folder named "Mesh".
     mesh_new = Mesh ( "Mesh/" + meshname + str(itmesh) + ".xml");
     mesh_new.init()
+    
+    
+
+    print('[%d/%d] 581: t=%f s'%(mpi_comm_world().rank+1,mpi_comm_world().size,time()-tic0))
+    
+    
+    
+    
     # read boundaries for new mesh
     boundaries_new = MeshFunction ('size_t', mesh_new,
                     "Mesh/" + meshname + str(itmesh) + "_faces.xml")
@@ -549,6 +606,8 @@ while itmesh <= NstepW :
     V_vector_new   = VectorFunctionSpace ( mesh_new, "CG", 1)
     V_scalar_new   = FunctionSpace       ( mesh_new, "CG", 1)
     V_tensor_new   = TensorFunctionSpace ( mesh_new, "CG", 1)
+    strainGN = Function(V_tensor_new, name="epsN")
+    stressGN = Function(V_tensor_new, name="stressN")
 	
 	#new boundary conditions
     g_bc_new =  sigma00 * normal_v_new   
@@ -593,7 +652,8 @@ while itmesh <= NstepW :
     u0ref    = interpolate (u0, V_vector_new)
     #alpharef = alpha
     # Here use the damage obtained in the previous step, with the previous mesh
-    alphaN   = interpolate ( alphaAux, V_scalar_new)
+    alphaN_0   = interpolate ( alphaAux, V_scalar_new)
+    alphaN.assign(alphaN_0)
     #alphaN   = alphaAux 
     #alphaN   = project ( alphaAux, V_scalar_new) 
 
@@ -621,7 +681,8 @@ while itmesh <= NstepW :
 
     bc_boxbottomN = DirichletBC ( V_vector_new.sub(2), Constant(0.0), boundaries_new, BOXBOTTOM)
 
-    bc_uN = [bc_boxbottomN]
+    bc_uN = [bc_boxbottomN,bc_boxmidx1N,bc_boxmidx2N,bc_boxmidy1N,bc_boxmidy2N]
+#    bc_uN = [bc_boxbottomN]
         
     # Boundary condition for the damage is damped into the array "bc_alphaN".
     bc_alpha_upN = DirichletBC ( V_scalar_new, 0.0, boundaries_new, CAVEUP )
@@ -636,19 +697,26 @@ while itmesh <= NstepW :
     #--------------------------------------------------------------------------------
     elastic_energy1_new    = 0.5 * inner ( sigma ( eps(uN), alphaN), eps ( uN) ) * dxN
     elastic_energy2_new    = 0.5 * inner ( sigma ( eps(uN-u0ref), alphaN), eps ( uN-u0ref) ) * dxN
+    elastic_energy2_new    = 0.5 * inner ( Desviador(sigma ( eps(uN), alphaN)), Desviador(eps ( uN) )) * dxN \
+                            - 0.5 * inner ( Esferico(sigma ( eps(uN), alphaN)), Esferico(eps ( uN) )) * dxN
     
     external_work_new     = dot (body_force, uN) * dxN
-    # External work includes also the influence of Neumann boundary conditions.
-    external_bc_new  = dot ( -g_bc_zz * normal_v_new, uN) * dsN ( CAVEUP)  \
-                     + dot ( -g_bc_zz * normal_v_new, uN) * dsN ( CAVEBOTTOM)  \
-                     + dot ( -g_bc_zz * normal_v_new, uN) * dsN ( CAVEMID)  
+    # External work includes also the influence of Neumann boundary conditions. 
+    #external_bc_new  = dot ( -g_bc_zz * normal_v_new, uN) * dsN ( CAVEUP)  \
+    #                 + dot ( -g_bc_zz * normal_v_new, uN) * dsN ( CAVEBOTTOM)  \
+    #                 + dot ( -g_bc_zz * normal_v_new, uN) * dsN ( CAVEMID)  
+
+    external_bc_new  = dot ( -g_bc_zz *ffD* normal_v_new, uN) * dsN ( BOXMIDX1)  \
+                     + dot ( -g_bc_zz *ffD* normal_v_new, uN) * dsN ( BOXMIDX2)  \
+                     + dot ( -g_bc_zz *ffD* normal_v_new, uN) * dsN ( BOXMIDY1)  \
+                     + dot ( -g_bc_zz *ffD* normal_v_new, uN) * dsN ( BOXMIDY2)  
 
             
     dissipated_energy_new = ( w ( alphaN) + ellv**2 *w1 * \
                               dot ( grad ( alphaN), grad ( alphaN) ) ) * dxN
 
-    total_energy1_new = elastic_energy1_new + dissipated_energy_new-external_work_new - external_bc_new
-    total_energy2_new = elastic_energy2_new + dissipated_energy_new-external_work_new - external_bc_new
+    total_energy1_new = elastic_energy1_new + dissipated_energy_new-external_work_new-external_bc_new
+    total_energy2_new = elastic_energy2_new + dissipated_energy_new-external_work_new-external_bc_new
 
     #--------------------------------------------------------------------------------            
     # Weak form of elasticity problem. This is the formal expression
@@ -725,79 +793,126 @@ while itmesh <= NstepW :
     # As the constraints may change we have to
     # apply the boundary condition at any interation loop.
     #-----------------------------------------------------------------------------
-    for bc in bc_alphaN :
-        bc.apply ( lbN.vector ( ) )
-        bc.apply ( ubN.vector ( ) )
+    #for bc in bc_alphaN :
+    #    bc.apply ( lbN.vector ( ) )
+    #    bc.apply ( ubN.vector ( ) )
     
     #-----------------------------------------------------------------------------                                        
     # Alternate mininimization
     # Initialization                
     #-----------------------------------------------------------------------------          
-    iter = 1; err_alphaN = 1
         
     #-------------------------------------------------------------------    
     # Iterations of the alternate minimization stop if an error limit is
     # reached or a maximim number of iterations have been done.
     #-------------------------------------------------------------------  
-    while err_alphaN > toll and iter < maxiter :                                
-        # solve elastic problem
-        solver_uN.solve ( )
+    iterKm=1
+    maxiterKm=1
+    while amax<0.99 and iterKm <= maxiterKm :     
+        iterKm += 1                                                             
+        if mpi_comm_world().rank == 0:
+        	print ("=================================================")
+        	print ("Comienza Calculo con Wk=%f ( t=%f s.)..."%(Kw,time()-tic0))
+        	print ("--------------------------------------------------")
+        
+        iter = 1; err_alphaN = 1
+        while err_alphaN > toll and iter < maxiter :   
+
+            alphaN.vector().gather(a0, np.array(range(V_scalar_new.dim()), "intc"))                             
+            # solve elastic problem
+            print('[%d/%d] 799: t=%f s. BEGIN solver_uN.solve ( )...'%(mpi_comm_world().rank+1,mpi_comm_world().size,time()-tic0))
+            solver_uN.solve ( )
+            print('[%d/%d] 802: t=%f s. END solver_uN.solve ( )...'%(mpi_comm_world().rank+1,mpi_comm_world().size,time()-tic0))
+                
+            err_alpha2=1
             
-		# solve damage problem via a constrained minimization algorithm.
-        solver_alphaN.solve ( problem_alphaN, alphaN.vector ( ), lbN.vector ( ), ubN.vector ( ) )
-
-        # Test the error, it is employed in one of the stoped criteria.
-        # Compute the error vector.
-        alphaN_error.vector ( ) [ :] = alphaN.vector ( ) - alphaN_0.vector ( )
-            
-        # Compute the norm of the the error vector.
-        err_alphaN = np.linalg.norm(alphaN_error.vector().get_local(), ord = np.Inf)
-            
-        # monitor the results for the new mesh
-        if mpi_comm_world ( ).rank == 0:
-            print ("Remesh: %d, Iteration:  %2d, Error: %2.8g, alpha_max: %.8g" \
-                % ( itmesh, iter, err_alphaN, alphaN.vector ( ).max ( ) ))
-        # update the solution for the current alternate minimization iteration.
-        alphaN_0.assign ( alphaN)
-                    
-        iter = iter + 1
-                    
-                                                                                            
-    if mpi_comm_world().rank == 0:
-    	print ("--------------------------------------------------")
-        print ("End of the alternate minimization in Remesh: %d" \
-        				%( itmesh ))
-        print ("--------------------------------------------------")
-
-	#----------------------------------------------------------------------------------------
-    # Once a new damage has been obtained, we store it into an auxiliary variable "alphaAux"
-    #----------------------------------------------------------------------------------------
-    alphaAux = Function ( V_scalar_new)
-
-    #  Control if alpha is too small
-    alphaN.vector()[alphaN.vector() < 1e-12] = 0.0
-
-    # Assign the values of alpha for later.
-    alphaAux.assign ( alphaN)
-
-	#-----------------------------------------------------------------------------------                                                                                            
-    # Dump the solution into files.
-    # In order to evidence the influence of the cavity we
-    # take the difference between the reference solution (without holes)
-    # and the solution corresponding to the augmented cylinder.
-    #-----------------------------------------------------------------------------------
-    #alphaDiff.vector()[:] = alphaN.vector() - alpharef.vector()
-    #alphaDiff.vector()[alphaDiff.vector() < 0] = 0.0
+            while err_alpha2>toll and iter<maxiter:
+                
+                alphaN.vector().gather(a1, np.array(range(V_scalar_new.dim()), "intc"))    
+                print('[%d/%d] 803: t=%f s. solver_alphaN.solve ( ... )...'%(mpi_comm_world().rank+1,mpi_comm_world().size,time()-tic0))
+                alphaN.vector ( )[alphaN.vector ( )>.99]=.99
+                
+                solver_alphaN.solve ( problem_alphaN, alphaN.vector ( ), lbN.vector ( ), ubN.vector ( ) )
+                #niterTotal = niterTotal+1
+                #-------------------------------------------------------------------
+                alphaN.vector().gather(a2, np.array(range(V_scalar_new.dim()), "intc"))
+                err_alpha2 = np.linalg.norm(a2 - a1, ord = np.Inf)
+                if mpi_comm_world().rank >= 0:
+                    print("Process %d: Iteration:  %2d,            aError: %2.8g, alpha_max: %.8g,   [%.8g,%.8g]" \
+                        %(mpi_comm_world().rank,iter, err_alpha2, a2.max(), (a2-a0).min(), (a2-a0).max()))
     
-    #file_alphaDiff << ( alphaDiff, 1.0 * itmesh)
-    #strainN      = eps(uN)
-    #stressN      = project(sigma(strainN,alpha),V_tensor_new)
-    #stressGN.assign(stressN)
-    #strainGN.assign(project(strainN,V_tensor_new))
-    file_alpha     << ( alphaN   , 1.0 * itmesh)
-    file_u         << ( uN, 1.0 * itmesh)
-    #file_sigma     << ( stressGN, 1.0 * itmesh)
-    #file_epsilon     << ( strainGN, 1.0 * itmesh)
+                                     
+    		# solve damage problem via a constrained minimization algorithm.
+            err_alphaN = np.linalg.norm(a2 - a0, ord = np.Inf)
+    
+            amax=1.0* alphaN.vector ( ).max ( )             
+            # monitor the results for the new mesh
+            if mpi_comm_world ( ).rank == 0:
+                print ("Remesh: %d, Iteration:  %2d, Error: %2.8g, alpha_max: %.8g" \
+                    % ( itmesh, iter, err_alphaN, amax ))
+            # update the solution for the current alternate minimization iteration.
+            alphaN_0.assign ( alphaN)
+                        
+            iter = iter + 1
+                        
+                                                                                                
+        if mpi_comm_world().rank == 0:
+            print ("--------------------------------------------------")
+            print ("End of the alternate minimization in Remesh: %d" \
+            				%( itmesh ))
+            print ("--------------------------------------------------")
+    
+    	#----------------------------------------------------------------------------------------
+        # Once a new damage has been obtained, we store it into an auxiliary variable "alphaAux"
+        #----------------------------------------------------------------------------------------
+        alphaAux = Function ( V_scalar_new)
+    
+        #  Control if alpha is too small
+        alphaN.vector()[alphaN.vector() < 1e-12] = 0.0
+    
+        # Assign the values of alpha for later.
+        alphaAux.assign ( alphaN)
+    
+    	#-----------------------------------------------------------------------------------                                                                                            
+        # Dump the solution into files.
+        # In order to evidence the influence of the cavity we
+        # take the difference between the reference solution (without holes)
+        # and the solution corresponding to the augmented cylinder.
+        #-----------------------------------------------------------------------------------
+        #alphaDiff.vector()[:] = alphaN.vector() - alpharef.vector()
+        #alphaDiff.vector()[alphaDiff.vector() < 0] = 0.0        
+        #file_alphaDiff << ( alphaDiff, 1.0 * itmesh)        
+        virTime=float(0.0 * itmesh-1.0*Kw)
+
+        print('[%d/%d] 872: t=%f s. virTime=%f, amax=%f'%(mpi_comm_world().rank+1,mpi_comm_world().size,time()-tic0,virTime,amax))
+
+        strainN      = eps(uN)
+
+        print('[%d/%d] 876: t=%f s. virTime=%f, amax=%f'%(mpi_comm_world().rank+1,mpi_comm_world().size,time()-tic0,virTime,amax))
+
+
+        stressN      = project(sigma(strainN,alpha),V_tensor_new, solver_type='cg')
+
+
+        print('[%d/%d] 882: t=%f s. virTime=%f, amax=%f'%(mpi_comm_world().rank+1,mpi_comm_world().size,time()-tic0,virTime,amax))
+
+        stressGN.assign(stressN)
+
+
+        print('[%d/%d] 887: t=%f s. virTime=%f, amax=%f'%(mpi_comm_world().rank+1,mpi_comm_world().size,time()-tic0,virTime,amax))
+
+        strainGN.assign(project(strainN,V_tensor_new,solver_type='cg'))
+        
+            
+        
+
+        print('[%d/%d] 895: t=%f s. virTime=%f, amax=%f'%(mpi_comm_world().rank+1,mpi_comm_world().size,time()-tic0,virTime,amax))
+        
+        file_alpha     << ( alphaN   , virTime)
+        file_u         << ( uN, virTime)
+        file_sigma     << ( stressGN, virTime)
+        file_epsilon     << ( strainGN, virTime)
+        Kw.assign(Constant(Kw*(10*amax+1)/11))
 
 
     # Eval the energy
